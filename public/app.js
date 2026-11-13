@@ -982,6 +982,10 @@ async function init() {
   await fetchLive();
   connectSse();
   setInterval(tickTimers, 1000);
+  // Keep free-tier hosts (e.g. Render) awake while the dashboard tab is open
+  setInterval(() => {
+    fetch('/health').catch(() => {});
+  }, 4 * 60 * 1000);
 }
 
 init().catch((err) => {
