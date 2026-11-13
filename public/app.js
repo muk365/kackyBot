@@ -456,12 +456,90 @@ function tickTimers() {
   renderHeaderMeta();
 }
 
+const STORAGE_SETTINGS_KEY = 'kackyalarm:v1:settings';
+
+function getAlarmsStorageKey(eventId) {
+  return `kackyalarm:v1:alarms:${eventId}`;
+}
+
+function getArmedNumbersFromState() {
+  return Object.entries(state.alarms)
+    .filter(([, enabled]) => Boolean(enabled))
+    .map(([num]) => Number(num))
+    .filter((n) => Number.isFinite(n) && n > 0)
+    .sort((a, b) => a - b);
+}
+
+function saveAlarmsToLocal(eventId) {
+  if (!eventId) return;
+  try {
+    const maps = getArmedNumbersFromState();
+    localStorage.setItem(
+      getAlarmsStorageKey(eventId),
+      JSON.stringify({ maps, updatedAt: Date.now() })
+    );
+  } catch {
+    // Ignore storage quota/privacy mode errors
+  }
+}
+
+function loadAlarmsFromLocal(eventId) {
+  if (!eventId) return null;
+  try {
+    const raw = localStorage.getItem(getAlarmsStorageKey(eventId));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed?.maps)) return null;
+    return parsed.maps.map(Number).filter((n) => Number.isFinite(n) && n > 0);
+  } catch {
+    return null;
+  }
+}
+
+function saveSettingsToLocal(settings) {
+  try {
+    localStorage.setItem(STORAGE_SETTINGS_KEY, JSON.stringify(settings));
+  } catch {
+    // Ignore storage errors
+  }
+}
+
+function loadSettingsFromLocal() {
+  try {
+    const raw = localStorage.getItem(STORAGE_SETTINGS_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
 async function fetchMe() {
   const res = await fetch('/api/me');
   const data = await res.json();
   state.twitchConfigured = Boolean(data.twitchConfigured);
   state.redirectUri = data.redirectUri || '';
   state.user = data.user || null;
+
+  // Restore saved user settings from browser localStorage if server DB was reset
+  if (state.user && !state.user.hasSavedSettings) {
+    const savedSettings = loadSettingsFromLocal();
+    if (savedSettings) {
+      try {
+        const restoreRes = await fetch('/api/settings', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(savedSettings),
+        });
+        if (restoreRes.ok) {
+          const restored = await restoreRes.json();
+          state.user = restored.user;
+        }
+      } catch {
+        // Ignore transient restore error
+      }
+    }
+  }
+
   renderAuth();
 }
 
@@ -479,6 +557,42 @@ async function fetchLive() {
   state.alarms = data.alarms || {};
   state.recentLogs = data.recentLogs || [];
   state.alertedMaps = data.alertedMaps || [];
+
+  const eventId = state.activeEvent?.id;
+  if (eventId) {
+    const localMaps = loadAlarmsFromLocal(eventId);
+    if (state.user) {
+      if (!data.hasServerAlarms && localMaps && localMaps.length > 0) {
+        // Server DB was freshly reset (e.g. Render free restart) — auto-restore from localStorage
+        for (const num of localMaps) {
+          state.alarms[num] = true;
+        }
+        try {
+          const syncRes = await fetch('/api/alarms/bulk', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              eventId,
+              mapNumbers: localMaps,
+              enabled: true,
+            }),
+          });
+          if (syncRes.ok) {
+            showToast(`Restored ${localMaps.length} armed map(s) from browser memory.`);
+          }
+        } catch {
+          // Will retry on next refresh
+        }
+      } else if (data.hasServerAlarms) {
+        saveAlarmsToLocal(eventId);
+      }
+    } else if (localMaps && localMaps.length > 0) {
+      // Logged out: still display locally saved selections
+      for (const num of localMaps) {
+        state.alarms[num] = true;
+      }
+    }
+  }
 
   renderHeaderMeta();
   renderServers();
@@ -503,13 +617,9 @@ async function refreshLiveData(includeMaps = true) {
 }
 
 async function toggleSingleAlarm(mapNumber, enabled) {
-  if (!state.user) {
-    showToast('Please log in with Twitch first to arm map alarms.', true);
-    renderMapsTable();
-    return;
-  }
   const previous = Boolean(state.alarms[mapNumber]);
   state.alarms[mapNumber] = enabled;
+  saveAlarmsToLocal(state.activeEvent?.id);
   renderServers();
 
   // Update just the row class without rebuilding the entire table
@@ -517,6 +627,11 @@ async function toggleSingleAlarm(mapNumber, enabled) {
   row?.classList.toggle('row-armed', enabled);
   const armedCount = Object.values(state.alarms).filter(Boolean).length;
   els.armedCountPill.textContent = `${armedCount} / ${state.maps.length} armed`;
+
+  if (!state.user) {
+    showToast('Saved locally in browser. Log in with Twitch to receive chat alarms.');
+    return;
+  }
 
   try {
     const res = await fetch(`/api/alarms/${mapNumber}`, {
@@ -533,6 +648,7 @@ async function toggleSingleAlarm(mapNumber, enabled) {
     }
   } catch (err) {
     state.alarms[mapNumber] = previous;
+    saveAlarmsToLocal(state.activeEvent?.id);
     renderMapsTable();
     renderServers();
     showToast(err.message, true);
@@ -540,10 +656,6 @@ async function toggleSingleAlarm(mapNumber, enabled) {
 }
 
 async function bulkToggleFiltered(enabled) {
-  if (!state.user) {
-    showToast('Please log in with Twitch first to manage alarms.', true);
-    return;
-  }
   const filtered = getFilteredMaps();
   if (filtered.length === 0) return;
 
@@ -551,8 +663,16 @@ async function bulkToggleFiltered(enabled) {
   for (const num of mapNumbers) {
     state.alarms[num] = enabled;
   }
+  saveAlarmsToLocal(state.activeEvent?.id);
   renderMapsTable();
   renderServers();
+
+  if (!state.user) {
+    showToast(
+      `${enabled ? 'Armed' : 'Cleared'} ${mapNumbers.length} map(s) locally. Log in with Twitch to send alarms.`
+    );
+    return;
+  }
 
   try {
     const res = await fetch('/api/alarms/bulk', {
@@ -578,8 +698,8 @@ async function bulkToggleFiltered(enabled) {
 async function logout() {
   await fetch('/auth/logout', { method: 'POST' });
   state.user = null;
-  state.alarms = {};
   state.recentLogs = [];
+  state.alertedMaps = [];
   renderAuth();
   renderServers();
   renderMapsTable();
@@ -770,6 +890,7 @@ els.importAlarmsBtn.addEventListener('click', async () => {
   for (const num of mapNumbers) {
     state.alarms[num] = true;
   }
+  saveAlarmsToLocal(state.activeEvent?.id);
   renderMapsTable();
   renderServers();
 
@@ -821,21 +942,23 @@ document.querySelectorAll('.chip-var').forEach((chip) => {
 
 els.settingsForm.addEventListener('submit', async (e) => {
   e.preventDefault();
+  const payload = {
+    alarmSeconds: Number(els.alarmSecondsInput.value),
+    messageTemplate: els.messageTemplateInput.value,
+    twitchChatEnabled: els.twitchChatEnabledInput.checked,
+    wizebotEnabled: els.wizebotEnabledInput.checked,
+    wizebotApiKey: els.wizebotApiKeyInput.value,
+  };
   try {
     const res = await fetch('/api/settings', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        alarmSeconds: Number(els.alarmSecondsInput.value),
-        messageTemplate: els.messageTemplateInput.value,
-        twitchChatEnabled: els.twitchChatEnabledInput.checked,
-        wizebotEnabled: els.wizebotEnabledInput.checked,
-        wizebotApiKey: els.wizebotApiKeyInput.value,
-      }),
+      body: JSON.stringify(payload),
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Failed to save settings');
     state.user = data.user;
+    saveSettingsToLocal(payload);
     closeSettingsModal();
     renderServers();
     showToast('Settings saved.');

@@ -42,6 +42,7 @@ function sanitizeUser(row) {
     alarmSeconds: Number(row.alarm_seconds || 60),
     messageTemplate: row.message_template || DEFAULT_MESSAGE_TEMPLATE,
     hasTwitchToken: Boolean(row.access_token),
+    hasSavedSettings: Boolean(row.has_saved_settings),
   };
 }
 
@@ -320,10 +321,13 @@ export function createApp(options = {}) {
     const eventId = kacky.activeEvent?.id ?? kacky.servers[0]?.eventId ?? null;
 
     const alarmsMap = {};
+    let hasServerAlarms = false;
     let recentLogs = [];
     let alertedMaps = [];
     if (req.user && eventId) {
-      for (const row of db.getMapAlarmsForUser(req.user.twitch_user_id, eventId)) {
+      const rows = db.getMapAlarmsForUser(req.user.twitch_user_id, eventId);
+      hasServerAlarms = rows.length > 0;
+      for (const row of rows) {
         alarmsMap[row.map_number] = Boolean(row.enabled);
       }
       recentLogs = db.getAlarmLogsForUser(req.user.twitch_user_id, 30);
@@ -339,6 +343,7 @@ export function createApp(options = {}) {
       lastMapsSyncAt: kacky.lastMapsSyncAt,
       lastMapsError: kacky.lastMapsError,
       alarms: alarmsMap,
+      hasServerAlarms,
       recentLogs,
       alertedMaps,
       serverTime: Date.now(),

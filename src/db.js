@@ -33,6 +33,7 @@ export function createDatabase(dbPath) {
       wizebot_api_key TEXT DEFAULT '',
       alarm_seconds INTEGER NOT NULL DEFAULT 60,
       message_template TEXT NOT NULL DEFAULT '${DEFAULT_MESSAGE_TEMPLATE.replaceAll("'", "''")}',
+      has_saved_settings INTEGER NOT NULL DEFAULT 0,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
     );
@@ -97,6 +98,12 @@ export function createDatabase(dbPath) {
       ON alerted_maps (twitch_user_id, server_login, map_number, provider, alerted_at DESC);
   `);
 
+  // Add has_saved_settings column if upgrading an existing DB
+  const userCols = db.prepare('PRAGMA table_info(users)').all();
+  if (!userCols.some((c) => c.name === 'has_saved_settings')) {
+    db.exec('ALTER TABLE users ADD COLUMN has_saved_settings INTEGER NOT NULL DEFAULT 0;');
+  }
+
   // Upgrade existing rows still using the legacy emoji default template
   db.prepare('UPDATE users SET message_template = ? WHERE message_template = ?').run(
     DEFAULT_MESSAGE_TEMPLATE,
@@ -135,6 +142,7 @@ export function createDatabase(dbPath) {
           wizebot_api_key = ?,
           alarm_seconds = ?,
           message_template = ?,
+          has_saved_settings = 1,
           updated_at = ?
       WHERE twitch_user_id = ?
     `),
