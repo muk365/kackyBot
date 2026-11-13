@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>KackyAlarm — Live Kacky Servers & Twitch Chat Map Alarms</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="topbar-left">
+        <div class="brand">
+          <span class="brand-dot"></span>
+          <span class="brand-name">KackyAlarm</span>
+        </div>
+        <span id="eventBadge" class="pill pill-event">Loading event…</span>
+        <span id="syncStatus" class="sync-status">Connecting…</span>
+        <button id="refreshBtn" class="btn btn-ghost btn-sm" title="Refresh live servers & maps">
+          ↻ Refresh
+        </button>
+      </div>
+
+      <div class="topbar-right" id="authArea">
+        <!-- Populated by app.js -->
+      </div>
+    </header>
+
+    <div id="alertBanner" class="alert-banner hidden"></div>
+
+    <main class="workspace">
+      <!-- SIDE 1: NOW ON SERVERS -->
+      <section class="panel panel-servers" aria-label="Now on servers">
+        <div class="panel-header">
+          <div>
+            <h2>Now on Servers</h2>
+            <p class="panel-subtitle">Live Trackmania Kacky servers from kacky.gg</p>
+          </div>
+          <div class="panel-header-actions">
+            <span id="serverCountPill" class="pill pill-muted">0 servers</span>
+          </div>
+        </div>
+        <div id="serversList" class="servers-grid">
+          <div class="empty-state">Loading live server data from kacky.gg…</div>
+        </div>
+      </section>
+
+      <!-- SIDE 2: ALL MAPS & ALARM SELECTOR -->
+      <section class="panel panel-maps" aria-label="All maps alarm table">
+        <div class="panel-header">
+          <div>
+            <h2>All Maps &amp; Alarms</h2>
+            <p class="panel-subtitle">
+              Select maps to trigger a Twitch chat alarm 1 minute before they start
+            </p>
+          </div>
+          <div class="panel-header-actions">
+            <span id="armedCountPill" class="pill pill-accent">0 armed</span>
+          </div>
+        </div>
+
+        <div class="maps-toolbar">
+          <input
+            id="mapSearch"
+            type="search"
+            class="input search-input"
+            placeholder="Search map #, author, WR holder…"
+            autocomplete="off"
+          />
+          <div class="filter-group" role="group" aria-label="Filter maps">
+            <button class="btn btn-chip active" data-filter="all">All</button>
+            <button class="btn btn-chip" data-filter="armed">Armed</button>
+            <button class="btn btn-chip" data-filter="unarmed">Not Armed</button>
+            <button class="btn btn-chip" data-filter="on_servers">On Servers</button>
+          </div>
+          <div class="bulk-group">
+            <button id="selectFilteredBtn" class="btn btn-ghost btn-sm">Arm Filtered</button>
+            <button id="clearFilteredBtn" class="btn btn-ghost btn-sm">Clear Filtered</button>
+            <button
+              id="exportAlarmsBtn"
+              class="btn btn-ghost btn-sm"
+              title="Copy armed map numbers (usable in DEFAULT_ARMED_MAPS on Render)"
+            >
+              Export List
+            </button>
+            <button
+              id="importAlarmsBtn"
+              class="btn btn-ghost btn-sm"
+              title="Arm a comma-separated list of map numbers"
+            >
+              Import List
+            </button>
+          </div>
+        </div>
+
+        <div class="table-wrap">
+          <table class="maps-table">
+            <thead>
+              <tr>
+                <th class="col-alarm">Alarm</th>
+                <th class="col-map">Map</th>
+                <th class="col-status">Server Status</th>
+                <th class="col-author">Author</th>
+                <th class="col-finishers">Finishers</th>
+                <th class="col-time">WR / AT</th>
+              </tr>
+            </thead>
+            <tbody id="mapsTableBody">
+              <tr>
+                <td colspan="6" class="empty-state">Loading event maps…</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+
+    <!-- ALARM LOGS -->
+    <section class="panel panel-logs" aria-label="Alarm log">
+      <div class="panel-header compact">
+        <div class="logs-title-row">
+          <h3>Alarm Activity Log</h3>
+          <span id="logsCountPill" class="pill pill-muted">0</span>
+        </div>
+        <div class="panel-header-actions">
+          <button id="testAlarmBtn" class="btn btn-twitch btn-sm hidden">
+            Send Test Chat Message
+          </button>
+        </div>
+      </div>
+      <div id="logsList" class="logs-list">
+        <div class="empty-state small">Log in with Twitch to see your alarm history.</div>
+      </div>
+    </section>
+
+    <!-- SETTINGS MODAL -->
+    <div id="settingsModal" class="modal-backdrop hidden" role="dialog" aria-modal="true">
+      <div class="modal">
+        <div class="modal-header">
+          <h3>Alarm &amp; Channel Settings</h3>
+          <button id="closeSettingsBtn" class="btn btn-ghost btn-sm" aria-label="Close">✕</button>
+        </div>
+        <form id="settingsForm" class="modal-body">
+          <div class="form-group">
+            <label for="alarmSecondsInput">Trigger Alarm Before Map Starts (seconds)</label>
+            <input
+              id="alarmSecondsInput"
+              type="number"
+              min="5"
+              max="300"
+              step="1"
+              class="input"
+              required
+            />
+            <span class="hint">Default: 60 seconds (1 minute before the next map starts).</span>
+          </div>
+
+          <div class="form-group">
+            <label for="messageTemplateInput">Twitch Chat Message Template</label>
+            <textarea
+              id="messageTemplateInput"
+              rows="3"
+              maxlength="450"
+              class="input"
+              required
+            ></textarea>
+            <div class="var-chips">
+              <button type="button" class="chip-var" data-var="{mapNumber}">{mapNumber}</button>
+              <button type="button" class="chip-var" data-var="{mapName}">{mapName}</button>
+              <button type="button" class="chip-var" data-var="{serverName}">{serverName}</button>
+              <button type="button" class="chip-var" data-var="{serverNumber}">{serverNumber}</button>
+              <button type="button" class="chip-var" data-var="{seconds}">{seconds}</button>
+              <button type="button" class="chip-var" data-var="{currentMapNumber}">
+                {currentMapNumber}
+              </button>
+            </div>
+            <div class="preview-box">
+              <span class="preview-label">Preview:</span>
+              <span id="templatePreview"></span>
+            </div>
+          </div>
+
+          <div class="form-group checkbox-row">
+            <label class="checkbox-label">
+              <input id="twitchChatEnabledInput" type="checkbox" />
+              <span>Post directly to my Twitch chat via Twitch API (no WizeBot needed)</span>
+            </label>
+          </div>
+
+          <div class="divider"></div>
+
+          <div class="form-group checkbox-row">
+            <label class="checkbox-label">
+              <input id="wizebotEnabledInput" type="checkbox" />
+              <span>Also send Custom Event to WizeBot (optional)</span>
+            </label>
+          </div>
+
+          <div class="form-group">
+            <label for="wizebotApiKeyInput">WizeBot API Key (from WizeBot Panel → API)</label>
+            <input
+              id="wizebotApiKeyInput"
+              type="password"
+              class="input"
+              placeholder="Optional WizeBot API key"
+              autocomplete="off"
+            />
+            <span class="hint">
+              Sends <code>DATA_JSON</code> to
+              <code>https://wapi.wizebot.tv/api/custom-events/{API_KEY}/send</code>.
+            </span>
+          </div>
+
+          <div class="modal-footer">
+            <button type="button" id="modalTestBtn" class="btn btn-ghost">Send Test Message</button>
+            <button type="submit" class="btn btn-primary">Save Settings</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- OAUTH SETUP MODAL -->
+    <div id="setupModal" class="modal-backdrop hidden" role="dialog" aria-modal="true">
+      <div class="modal">
+        <div class="modal-header">
+          <h3>Connect Twitch OAuth (One-Time Setup)</h3>
+          <button id="closeSetupBtn" class="btn btn-ghost btn-sm" aria-label="Close">✕</button>
+        </div>
+        <div class="modal-body setup-body">
+          <p>
+            To let users log in with Twitch and post alarms directly into their own Twitch chat,
+            register a free Twitch Application in the Twitch Developer Console:
+          </p>
+          <ol class="setup-steps">
+            <li>
+              Open
+              <a href="https://dev.twitch.tv/console/apps" target="_blank" rel="noreferrer"
+                >dev.twitch.tv/console/apps</a
+              >
+              and click <strong>Register Your Application</strong>.
+            </li>
+            <li>
+              Set <strong>OAuth Redirect URLs</strong> to:
+              <div class="copy-box">
+                <code id="setupRedirectUri">http://localhost:3000/auth/twitch/callback</code>
+                <button type="button" id="copyRedirectBtn" class="btn btn-ghost btn-sm">
+                  Copy
+                </button>
+              </div>
+            </li>
+            <li>
+              Copy your <strong>Client ID</strong> and generate a <strong>Client Secret</strong>,
+              then paste them into <code>.env</code> as <code>TWITCH_CLIENT_ID</code> and
+              <code>TWITCH_CLIENT_SECRET</code> and restart the server.
+            </li>
+          </ol>
+          <p class="hint">
+            Note: WizeBot is <strong>not required</strong> — Twitch's official Helix API posts
+            directly into the logged-in Twitch user's channel chat. (WizeBot Custom Events are also
+            supported as an optional add-on in Settings.)
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <div id="toast" class="toast hidden"></div>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

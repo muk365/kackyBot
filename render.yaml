@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: kacky-alarm
+    runtime: docker
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: PORT
+        value: 3000
+      - key: TWITCH_CLIENT_ID
+        sync: false
+      - key: TWITCH_CLIENT_SECRET
+        sync: false
+      - key: DEFAULT_ARMED_MAPS
+        sync: false
